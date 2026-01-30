@@ -1,0 +1,10 @@
+{
+  "name": "trustflow-argocd-extension",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TrustFlow Argo CD UI extension bundle.",
+  "scripts": {
+    "build": "node scripts/build.js",
+    "package": "bash scripts/package.sh"
+  }
+}
