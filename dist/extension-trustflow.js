@@ -116,7 +116,7 @@
       "Content-Type": "application/json",
     };
     if (appName) {
-      headers["Argocd-Application-Name"] = `${appNamespace}/${appName}`;
+      headers["Argocd-Application-Name"] = `${appNamespace}:${appName}`;
       headers["Argocd-Project-Name"] = projectName;
     }
     return headers;
