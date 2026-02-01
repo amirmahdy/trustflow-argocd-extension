@@ -99,11 +99,15 @@
     return [];
   };
 
-  const extractImages = (resource) => {
-    if (!resource) return [];
+  const extractImages = (resource, application) => {
+    if (!resource) return extractImagesFromApplication(application);
     const live = parseJSON(resource.liveState);
-    if (resource.kind === "Application") return extractImagesFromApplication(live);
-    return extractImagesFromWorkload(live);
+    if (resource.kind === "Application") {
+      const fromLive = extractImagesFromApplication(live);
+      return fromLive.length ? fromLive : extractImagesFromApplication(application);
+    }
+    const fromWorkload = extractImagesFromWorkload(live);
+    return fromWorkload.length ? fromWorkload : extractImagesFromApplication(application);
   };
 
   const hasDigest = (image) => /@sha256:[a-f0-9]{64}$/i.test(image || "");
@@ -141,9 +145,9 @@
     const resource = props.resource;
 
     const images = useMemo(() => {
-      const raw = extractImages(resource);
+      const raw = extractImages(resource, props.application);
       return dedupe(raw);
-    }, [resource]);
+    }, [resource, props.application]);
 
     const [imageResults, setImageResults] = useState({});
     const [vulnSummary, setVulnSummary] = useState({
