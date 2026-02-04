@@ -793,6 +793,9 @@
               `reports: ${vulnSummary.reportCount}`,
             ),
           ),
+          vulnSummary.loading
+            ? React.createElement("div", { style: styles.caption }, "Pending: scanning in progress.")
+            : null,
           React.createElement(
             "div",
             { style: styles.cardGrid },
