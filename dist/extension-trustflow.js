@@ -282,34 +282,125 @@
     return fromWorkload.length ? fromWorkload : extractImagesFromApplication(application);
   };
 
-  const hasDigest = (image) => /@sha256:[a-f0-9]{64}$/i.test(image || "");
+	  const hasDigest = (image) => /@sha256:[a-f0-9]{64}$/i.test(image || "");
 
-  const buildHeaders = (application) => {
-    const appNamespace = application?.metadata?.namespace || "argocd";
-    const appName = application?.metadata?.name || "";
-    const projectName = application?.spec?.project || "default";
-    const headers = {
-      "Content-Type": "application/json",
-    };
-    if (appName) {
-      headers["Argocd-Application-Name"] = `${appNamespace}:${appName}`;
-      headers["Argocd-Project-Name"] = projectName;
-    }
-    return headers;
-  };
+	  const buildHeaders = (application) => {
+	    const appNamespace = application?.metadata?.namespace || "argocd";
+	    const appName = application?.metadata?.name || "";
+	    const projectName = application?.spec?.project || "default";
+	    const headers = {
+	      Accept: "application/json",
+	      "Content-Type": "application/json",
+	    };
+	    if (appName) {
+	      headers["Argocd-Application-Name"] = `${appNamespace}:${appName}`;
+	      headers["Argocd-Project-Name"] = projectName;
+	    }
+	    return headers;
+	  };
 
-  const fetchJSON = async (url, headers) => {
-    const response = await fetch(url, {
-      method: "GET",
-      headers,
-      credentials: "include",
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(text || `Request failed: ${response.status}`);
-    }
-    return response.json();
-  };
+	  const looksLikeGzipBytes = (bytes) => {
+	    if (!bytes || bytes.length < 2) return false;
+	    return bytes[0] === 0x1f && bytes[1] === 0x8b;
+	  };
+
+	  const decodeUtf8 = (bytes) => {
+	    if (!bytes || !bytes.length) return "";
+	    try {
+	      return new TextDecoder("utf-8").decode(bytes);
+	    } catch (error) {
+	      return "";
+	    }
+	  };
+
+	  const decompressGzipToText = async (bytes) => {
+	    if (!looksLikeGzipBytes(bytes)) return null;
+	    if (typeof DecompressionStream === "undefined") return null;
+	    try {
+	      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+	      const decompressed = await new Response(stream).arrayBuffer();
+	      return decodeUtf8(new Uint8Array(decompressed));
+	    } catch (error) {
+	      return null;
+	    }
+	  };
+
+	  const safeParseJSON = (text) => {
+	    if (!text) return null;
+	    try {
+	      return JSON.parse(text);
+    } catch (error) {
+      return null;
+	    }
+	  };
+
+	  const summarizeTextForError = (text, limit = 400) => {
+	    if (!text || typeof text !== "string") return "";
+	    const cleaned = text.replace(/[\r\n\t]+/g, " ").trim();
+	    if (cleaned.length <= limit) return cleaned;
+	    return `${cleaned.slice(0, limit).trim()}…`;
+	  };
+
+	  const looksLikeBinaryText = (text) => {
+	    if (!text || typeof text !== "string") return false;
+	    const sample = text.slice(0, 200);
+	    if (!sample) return false;
+	    let bad = 0;
+	    for (let i = 0; i < sample.length; i += 1) {
+	      const code = sample.charCodeAt(i);
+	      if (sample[i] === "\uFFFD") bad += 1;
+	      else if (code < 9) bad += 1;
+	      else if (code > 13 && code < 32) bad += 1;
+	    }
+	    return bad / sample.length > 0.05;
+	  };
+
+	  const fetchJSON = async (url, headers) => {
+	    const response = await fetch(url, {
+	      method: "GET",
+	      headers,
+	      credentials: "include",
+	    });
+	    const buffer = await response.arrayBuffer();
+	    const bytes = new Uint8Array(buffer || []);
+	    const text =
+	      (await decompressGzipToText(bytes)) ??
+	      decodeUtf8(bytes);
+	    const data = safeParseJSON(text);
+	    if (!response.ok) {
+	      if (data && typeof data.error === "string") {
+	        throw new Error(data.error);
+	      }
+	      if (data && Array.isArray(data.errors) && data.errors.length) {
+	        throw new Error(data.errors.join(" | "));
+	      }
+	      if (looksLikeGzipBytes(bytes)) {
+	        throw new Error(
+	          "Backend returned gzipped bytes. A proxy may be stripping Content-Encoding: gzip; check Argo CD extension proxy config or baseUrl.",
+	        );
+	      }
+	      if (looksLikeBinaryText(text)) {
+	        throw new Error(
+	          `Request failed: ${response.status}. Backend returned non-JSON binary data; check Argo CD extension proxy config or baseUrl.`,
+	        );
+	      }
+	      const snippet = summarizeTextForError(text);
+	      throw new Error(snippet || `Request failed: ${response.status}`);
+	    }
+	    if (data) return data;
+	    if (looksLikeGzipBytes(bytes)) {
+	      throw new Error(
+	        "Backend returned gzipped bytes. A proxy may be stripping Content-Encoding: gzip; check Argo CD extension proxy config or baseUrl.",
+	      );
+	    }
+	    if (looksLikeBinaryText(text)) {
+	      throw new Error(
+	        `Expected JSON response, got binary data (HTTP ${response.status}). Check Argo CD extension proxy config or baseUrl.`,
+	      );
+	    }
+	    const snippet = summarizeTextForError(text);
+	    throw new Error(snippet ? `Expected JSON response. Body: ${snippet}` : "Expected JSON response.");
+	  };
 
   const TrustFlowPanel = (props) => {
     const baseUrl = window.TRUSTFLOW_VARS?.baseUrl || DEFAULT_BASE_URL;
